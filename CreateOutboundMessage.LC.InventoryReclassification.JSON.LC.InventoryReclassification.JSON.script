@@ -3,7 +3,7 @@ import java.text.SimpleDateFormat;
 BigDecimal qty = BigDecimal.ZERO;
 User user = null;
 MaterialMaster mm = null;
-
+t.info("check");
 List<MMSerialNumber> serial = null;
 
 JSONParentNodeBuilder root = builder.rootNode();
