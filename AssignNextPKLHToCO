@@ -1,0 +1,76 @@
+import java.util.concurrent.locks.Lock;
+import com.solochain.core.Transaction;
+import com.solochain.module.Solochain.Enumeration.Container_Status;
+import com.solochain.module.Solochain.Enumeration.PKLH_Status;
+import com.solochain.module.Solochain.Enumeration.PKLH_SubType;
+import com.solochain.module.Solochain.Message.AssignNextClusterPKLHToCO_UserConfirmation;
+import com.solochain.module.Solochain.Message.AssignNextClusterPKLHToCO_UserNotification;
+
+import solomodel.core.factory.TransactionFactory;
+import solomodel.core.object.AttributeUpdate;
+import solomodel.service.locking.LockContext;
+
+
+
+@Override
+protected PKLH execute() throws Exception {
+
+	Transaction t2 = TransactionFactory.createLocalTransaction(t);
+	Lock lock = t2.getLock(new LockContext(t2, AssignNextClusterPKLHToCO.class));
+
+	try {
+		lock.lock();
+
+		List<PKLH_Status> statuses = Lists.newArrayList();
+		statuses.add(PKLH_Status.STDBY);
+		if(container != null){
+			statuses.add(PKLH_Status.INPROGRESS);
+		}
+
+		List<PKLH> pklhList = zone.getPKLHList(pickingJob, null, statuses);
+		PKLH pklhToAdd = null;
+		for(PKLH pklh : pklhList){
+			//Don't take In Progress PKLH if container is stand by
+			if(container instanceof Container && ((Container)container).getStatus() == Container_Status.STDBY){
+				if(pklh.getStatus() == PKLH_Status.INPROGRESS){
+					continue;
+				}
+			}
+
+			pklhToAdd = pklh;
+			if (pklhToAdd != null) {
+
+				AssignPKLHToUser assignUser = new AssignPKLHToUser();
+				assignUser.setPKLH(pklhToAdd);
+				assignUser.setUser(t.getUser());
+				t.execute(assignUser);				
+
+				pklhToAdd.setStatus(PKLH_Status.INPROGRESS);
+				save(pklhToAdd);
+
+				if(container != null){
+					AssignCoToPKLH assignOp = new AssignCoToPKLH();
+					assignOp.setContainer(container);
+					assignOp.setPKLH(pklhToAdd);
+					t.execute(assignOp);
+
+					assignContainerToPKLI(pklhToAdd.getPKLI(""));
+				}
+				t.addMessage(AssignNextClusterPKLHToCO_UserConfirmation.PKLH_ADDED_TO_CLUSTER);	
+				return pklhToAdd;
+			}
+		} 
+
+		if(pklhToAdd == null) {
+			t.addMessage(AssignNextClusterPKLHToCO_UserNotification.NO_MORE_PKLH_AVAILABLE);
+		}
+		return null;	
+
+	} finally {
+		lock.unlock();
+	}
+}
+
+private void assignContainerToPKLI(List<PKLI> pklis) {
+	t.update(pklis, new AttributeUpdate(PKLI.Field.CurrentContainer, container));
+}
