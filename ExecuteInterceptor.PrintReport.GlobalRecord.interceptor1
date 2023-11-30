@@ -1,0 +1,103 @@
+import java.util.HashMap;
+import java.util.Map;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.util.Base64;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+IGlobalContainer igc = (IGlobalContainer) record;
+TransactionGroup tg = (TransactionGroup) igc;
+Map<String, String> fileInformationMap = new HashMap<>();
+String githubToken = "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";
+String content = "";
+String commitMessage = "";
+String committer = t.getUser().getUserName();
+String curlCommand = "";
+StringBuilder sql = new StringBuilder();
+sql.append("SELECT gk.Name, om.ToValue ");//fromValue and toValue = ObjectModification
+sql.append(" FROM ObjectModification om ");//fileName = GlobalKeyVersion
+sql.append(" INNER JOIN ModelTransaction mt on om.Transaction = mt ");
+sql.append(" INNER JOIN TransactionGroup tg on mt.TransactionGroup = tg ");
+sql.append(" INNER JOIN GlobalKeyVersion gk on gk.Transaction = mt ");
+sql.append(" WHERE tg = ? and om.FromValue != '' ");
+sql.append(" Order by mt.Timestamp"); //this way, hashmap will only contain the most recent script because it will overwrite with unique key
+
+List<String[]> strs = t.getList(sql.toString(), tg);
+
+//Inserting TGs into hashmap
+if(!strs.isEmpty()){
+	for(String[] str : strs){
+		fileInformationMap.put(str[0], str[1]);
+	}
+}
+// Iterate through all file entries
+for (Map.Entry<String, String> entry : fileInformationMap.entrySet()) {
+	String fileName = entry.getKey();
+	String githubApiUrl = "https://api.github.com/repos/chongsuk21/solo/contents/" + fileName;
+    String fileContent = entry.getValue();
+	commitMessage = "test commit1111";
+	byte[] encodedBytes = Base64.getEncoder().encode(fileContent.getBytes());
+    String encodedString = new String(encodedBytes);
+	t.info("checkHs filename " + fileName);
+	//First, get SHA
+	try {
+	HttpClient httpClient = HttpClients.createDefault();
+	HttpGet httpGet = new HttpGet(githubApiUrl);
+	httpGet.setHeader("Accept", "application/vnd.github.v3+json");
+    httpGet.setHeader("Authorization", "token " + githubToken);
+    httpGet.setHeader("X-GitHub-Api-Version", "2022-11-28");
+	HttpResponse response = httpClient.execute(httpGet);
+	//Building the curl command for either creating or updating
+	
+	// Check if the request was successful (status code 200)
+    if (response.getStatusLine().getStatusCode() == 200) {//The script exsits in Git, so update the script
+    	String responseBody = EntityUtils.toString(response.getEntity());
+        // Parse the JSON response and extract the SHA
+		ObjectMapper objectMapper = new ObjectMapper();
+        JsonNode jsonNode = objectMapper.readTree(responseBody);
+        JsonNode shaNode = jsonNode.path("sha");
+		String sha = shaNode.isMissingNode() ? null : shaNode.asText();
+		curlCommand = "curl -X PUT -H \"Accept: application/vnd.github+json\" -H \"Authorization: token " + githubToken + "\" -H \"X-GitHub-Api-Version: 2022-11-28\" \"https://api.github.com/repos/chongsuk21/solo/contents/" + fileName + "\" -d \"{\\\"message\\\":\\\"" + commitMessage + "\\\",\\\"committer\\\":{\\\"name\\\":\\\"" + "abcCOmmiter" + "\\\",\\\"email\\\":\\\"octocat@github.com\\\"},\\\"content\\\":\\\"" +encodedString+"\\\",\\\"sha\\\":\\\""+sha+"\\\"}\""; 
+        t.info("SHA: " + sha);
+    } else {//The script does not exist in Git therefore create one
+        t.info("GitHub API request failed with status code: " + response.getStatusLine().getStatusCode());
+		curlCommand = "curl -X PUT -H \"Accept: application/vnd.github+json\" -H \"Authorization: token " + githubToken + "\" -H \"X-GitHub-Api-Version: 2022-11-28\" \"https://api.github.com/repos/chongsuk21/solo/contents/" + fileName + "\" -d \"{\\\"message\\\":\\\"" + commitMessage + "\\\",\\\"committer\\\":{\\\"name\\\":\\\"" + "abcCOmmiter" + "\\\",\\\"email\\\":\\\"octocat@github.com\\\"},\\\"content\\\":\\\"" +encodedString+"\\\"}\""; 
+    }
+	// Create a ProcessBuilder
+		t.info("curl command " + curlCommand);
+	if(!curlCommand.isEmpty()){
+		java.lang.ProcessBuilder processBuilder = new java.lang.ProcessBuilder("cmd", "/c", curlCommand);
+		processBuilder.redirectErrorStream(true);
+		// Start the process
+		java.lang.Process process = processBuilder.start();	
+		// Read the output of the process
+		BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+		String line;
+		while ((line = reader.readLine()) != null) {
+		   t.info(line);
+		}
+		// Wait for the process to finish
+		int exitCode = process.waitFor();
+		t.info("Process exited with code " + exitCode);
+	}else{
+		t.info("checkhs curlCommand is empty");	
+	}
+		
+	}catch (Exception e) {
+    	e.printStackTrace();
+    }
+   
+	
+	
+	
+}
+
+
+
+return null;
