@@ -1,1 +1,181 @@
-t.info("heyheyheyheyeheyeyeyeyey");
+import solomodel.util.DateUtils;
+import java.text.SimpleDateFormat;
+BigDecimal qty = BigDecimal.ZERO;
+User user = null;
+MaterialMaster mm = null;
+
+List<MMSerialNumber> serial = null;
+
+JSONParentNodeBuilder root = builder.rootNode();
+
+
+JSONParentNodeBuilder dimensions = null;
+
+
+String baseDimensionQuery = "";
+baseDimensionQuery += "FROM MIMovement mim ";
+baseDimensionQuery += "INNER JOIN MIAdjustment mia on mia.Movement = mim ";
+baseDimensionQuery += "INNER JOIN MIAdjustmentDimension miad on miad.Adjustment = mia ";
+baseDimensionQuery += "INNER JOIN MIDimension mid on miad.Dimension = mid ";
+
+
+if (movement.getUser() != null){
+	if (movement.getUser() instanceof User){
+		user = (User) movement.getUser();
+	}
+}
+
+
+if(movement.getMaterial() != null){
+	
+	if(movement.getMaterialMaster() != null){
+		mm = movement.getMaterialMaster();	
+	}
+	
+	JSONParentNodeBuilder transactions = root.arr("transactions");
+	JSONParentNodeBuilder child1 = transactions.obj("Child1");
+	child1.val("Source", "Solochain");
+	child1.val("Instance", movement.getFromSite().getAccountNo());
+	
+	
+	JSONParentNodeBuilder node = child1.obj("InventoryReclassification");
+	node.val("OID", movement);
+	node.val("SystemEvent", exportEvent);
+	node.val("Type",movement.getType());
+	node.val("Site", movement.getFromSite().getAccountNo());
+	node.val("PartNo", movement.getMaterialMaster().getPartNo());
+
+
+	if(movement.getQuantity() !=null){
+		node.val("AdjustedQty",  movement.getQuantity().getBaseValue());
+		node.val("UOI", movement.getUOI().getName());
+		node.val("AdjustedBaseQty", movement.getQuantity().getBaseValue());	
+	}
+	node.val("BaseUOI",mm.getBaseUOI().getName());
+	node.val("ReasonCode","SOLO_TC");
+	if(movement.getFromOwner() != null){
+		node.val("Owner",movement.getFromOwner().getName());
+	}else if(movement.getToOwner() != null){
+		node.val("Owner",movement.getToOwner().getName());
+	}
+	if(user.getUserName() != null){
+		node.val("User",user.getUserName());
+	}
+	node.val("DateTime",DateUtils.formatISO(movement.getStampDate())); // right DateTime...?
+
+
+	dimensions = node.obj("Dimensions");
+
+
+	// CUSTOM BIZCHAIN 168549
+	String newSqlLotNo = "";
+	newSqlLotNo += "Select mmd, mia.Type ";
+	newSqlLotNo += baseDimensionQuery;
+	newSqlLotNo += "inner join MMDimension mmd on mmd = mid.Dimension ";
+	newSqlLotNo += "WHERE mim = ?";//NegativeAdj -- From PositiveAdj
+	
+	
+		
+	List<String[]> strs_mmd = t.getList(newSqlLotNo.toString(), movement);
+	String fromSerial,fromLot,fromCoo;
+	Date fromExpiry = null;
+	String toSerial,toLot,toCoo;
+	fromSerial=fromLot=fromCoo = "" ;
+	toSerial=toLot=toCoo = "" ;
+	Date toExpiry = null;
+	if(!strs_mmd.isEmpty()){
+		for(String[] str : strs_mmd){
+			MMDimension mmd = t.get(MMDimension.class, Integer.parseInt(str[0]));
+			fromExpiry = null;
+			toSerial=toLot=toCoo = "" ;
+			
+			if (mmd instanceof MMSerialNumber){
+				 if(str[1].equals("NegativeAdj") || str[1].equals("MoveIn") || str[1].equals("FromUOI")){			
+					fromSerial = mmd.getValue();						
+					dimensions.val("FromSerialNo",fromSerial);					
+				}else
+				if (str[1].equals("PositiveAdj") || str[1].equals("MoveOut") || str[1].equals("ToUOI")){
+					toSerial = mmd.getValue();
+					dimensions.val("ToSerialNo",toSerial);
+				}
+					if(toSerial.equals("")){
+						toSerial = fromSerial;
+						dimensions.val("ToSerialNo",toSerial);
+					}
+
+			}
+
+			toLot = "";
+			if(mmd instanceof MMLotNumber){
+				if(str[1].equals("NegativeAdj") || str[1].equals("MoveIn") || str[1].equals("FromUOI")){				
+					fromLot = mmd.getValue();	
+					dimensions.val("FromLotNo",fromLot);
+				}else if (str[1].equals("PositiveAdj") || str[1].equals("MoveOut") || str[1].equals("ToUOI")){
+					toLot = mmd.getValue();	
+					dimensions.val("ToLotNo",toLot);
+				}
+					if(toLot.equals("")){
+						toLot = fromLot;
+						dimensions.val("ToLotNo",toLot);
+					}
+
+			}
+
+
+			toExpiry = null;
+			SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm");
+			Date date = new Date();
+			if (mmd instanceof MMExpiryDate){
+				MMExpiryDate mmde = t.get(MMExpiryDate.class, mmd.getOID());
+				if(str[1].equals("NegativeAdj") || str[1].equals("MoveIn") || str[1].equals("FromUOI")){
+					fromExpiry =  mmde.getExpiryDate();
+					dimensions.val("FromExpiryDate",dateFormat.format(fromExpiry));
+				}else if (str[1].equals("PositiveAdj") || str[1].equals("MoveOut") || str[1].equals("ToUOI")){
+					toExpiry =  mmde.getExpiryDate();
+					dimensions.val("ToExpiryDate",dateFormat.format(toExpiry));
+				}
+					if(toExpiry == null){
+						toExpiry = fromExpiry;
+						dimensions.val("ToExpiryDate",dateFormat.format(toExpiry));
+					}
+
+			}
+
+
+			toCoo = "";
+			if (mmd instanceof MMCountryOfOrigin){
+				if(str[1].equals("NegativeAdj") || str[1].equals("MoveIn") || str[1].equals("FromUOI")){
+					fromCoo = mmd.getValue();
+					dimensions.val("FromCOO",fromCoo);
+				}else if (str[1].equals("PositiveAdj") || str[1].equals("MoveOut") || str[1].equals("ToUOI")){
+					toCoo = mmd.getValue();
+					dimensions.val("ToCOO",toCoo);
+				}
+					if(toCoo.equals("")){
+						toCoo = fromCoo;
+						dimensions.val("ToCOO",toCoo);
+					}
+			}
+			
+		}
+	}
+	if(fromSerial.equals("") && toSerial.equals("")){
+		dimensions.val("FromSerialNo","");
+		dimensions.val("ToSerialNo","");
+	}
+	if(fromLot.equals("") && toLot.equals("")){
+		dimensions.val("FromLotNo","");
+		dimensions.val("ToLotNo","");
+	}
+	if(fromExpiry == null && toExpiry == null){
+		dimensions.val("FromExpiryDate","");
+		dimensions.val("ToExpiryDate","");
+	}
+	if(fromCoo.equals("") && toCoo.equals("")){
+		dimensions.val("FromCOO","");
+		dimensions.val("ToCOO","");
+	}	
+}
+	
+
+return null;
