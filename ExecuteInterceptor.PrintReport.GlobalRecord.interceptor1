@@ -14,7 +14,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 IGlobalContainer igc = (IGlobalContainer) record;
 TransactionGroup tg = (TransactionGroup) igc;
 Map<String, String> fileInformationMap = new HashMap<>();
-String githubToken = "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";
+String githubToken = "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";//new token
 String content = "";
 String commitMessage = "";
 String committer = t.getUser().getUserName();
